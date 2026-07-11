@@ -1,0 +1,16 @@
+{
+  "name": "tavus-companion",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Personal AI video companion using the Tavus Conversational Video Interface API",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.68.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.0"
+  }
+}
