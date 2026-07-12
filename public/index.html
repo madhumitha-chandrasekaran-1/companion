@@ -204,7 +204,8 @@
     font-weight: 500;
   }
 
-  input[type="text"] {
+  input[type="text"],
+  input[type="password"] {
     width: 100%;
     padding: 10px 13px;
     border: 1px solid var(--border);
@@ -216,9 +217,11 @@
     transition: border-color 0.15s ease, box-shadow 0.15s ease;
   }
 
-  input[type="text"]::placeholder { color: var(--text-faint); }
+  input[type="text"]::placeholder,
+  input[type="password"]::placeholder { color: var(--text-faint); }
 
-  input[type="text"]:focus {
+  input[type="text"]:focus,
+  input[type="password"]:focus {
     outline: none;
     border-color: var(--accent);
     box-shadow: 0 0 0 3px var(--accent-soft);
@@ -472,15 +475,124 @@
 
   .hidden { display: none !important; }
 
+  /* ---------- Settings button + modal ---------- */
+
+  .topbar { justify-content: space-between; }
+
+  .btn-settings {
+    background: transparent;
+    border: 1px solid rgba(223, 174, 108, 0.3);
+    color: var(--bg);
+    padding: 7px 14px;
+    font-size: 0.78rem;
+    font-weight: 500;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+  }
+
+  .btn-settings:hover:not(:disabled) { background: rgba(223, 174, 108, 0.1); }
+
+  .btn-settings .gear {
+    width: 12px;
+    height: 12px;
+    border: 1.5px solid currentColor;
+    border-radius: 50%;
+    position: relative;
+    flex-shrink: 0;
+  }
+
+  .key-status-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--danger);
+  }
+
+  .key-status-dot.ok { background: #4ade80; }
+
+  .modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(10, 8, 5, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10;
+    padding: 20px;
+    animation: fade-in 0.2s ease both;
+  }
+
+  .modal {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-top: 2px solid var(--accent);
+    border-radius: 12px;
+    padding: 32px;
+    max-width: 420px;
+    width: 100%;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+  }
+
+  .modal h2 { margin: 0 0 6px; font-size: 1.25rem; color: var(--text); text-align: left; }
+  .modal p { margin: 0 0 4px; color: var(--text-soft); font-size: 0.88rem; line-height: 1.5; text-align: left; }
+
+  .modal-field-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 0.72rem;
+    color: var(--text-soft);
+    margin-top: 6px;
+  }
+
+  .modal-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 22px;
+  }
+
+  .modal-actions .btn-primary { margin-top: 0; width: auto; flex: 1; }
+
+  .modal-actions .btn-secondary { margin-top: 0; width: auto; padding: 11px 20px; }
+
+  /* ---------- Toast notification ---------- */
+
+  .toast {
+    position: fixed;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%) translateY(-12px);
+    background: var(--ink-deep, #0a1e18);
+    color: var(--bg);
+    border: 1px solid rgba(223, 174, 108, 0.35);
+    padding: 12px 20px;
+    border-radius: 9px;
+    font-size: 0.88rem;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+    z-index: 20;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease, transform 0.2s ease;
+  }
+
+  .toast.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+    pointer-events: auto;
+  }
+
   @media (max-width: 520px) {
     .card { padding: 28px 22px; }
     .topbar { padding: 16px 18px; }
     main { padding: 20px 16px; }
+    .modal { padding: 26px 22px; }
   }
 
   @media (prefers-reduced-motion: reduce) {
     .card, ul.facts li, .call-wrap { animation: none !important; opacity: 1 !important; transform: none !important; }
     .spinner, .live-badge .blink { animation: none !important; opacity: 1 !important; }
+    .toast { transition: none !important; }
   }
 </style>
 </head>
@@ -490,7 +602,36 @@
 
 <header class="topbar">
   <span class="mark"><span class="dot"></span>Companion</span>
+  <button type="button" class="btn-settings" id="btn-open-settings">
+    <span class="gear"></span>
+    Settings
+    <span class="key-status-dot" id="key-status-dot"></span>
+  </button>
 </header>
+
+<div class="toast" id="toast"></div>
+
+<div class="modal-backdrop hidden" id="settings-backdrop">
+  <div class="modal">
+    <h2>API keys</h2>
+    <p>Paste in your keys to unlock your companion.</p>
+
+    <form id="form-keys">
+      <label for="input-tavus-key">Tavus API key</label>
+      <input type="password" id="input-tavus-key" placeholder="Paste your Tavus API key" autocomplete="off" />
+      <div class="modal-field-status"><span class="key-status-dot" id="tavus-status-dot"></span><span id="tavus-status-text">Not set</span></div>
+
+      <label for="input-anthropic-key">Anthropic API key</label>
+      <input type="password" id="input-anthropic-key" placeholder="Paste your Anthropic API key" autocomplete="off" />
+      <div class="modal-field-status"><span class="key-status-dot" id="anthropic-status-dot"></span><span id="anthropic-status-text">Not set</span></div>
+
+      <div class="modal-actions">
+        <button type="submit" class="btn-primary" id="btn-save-keys">Save</button>
+        <button type="button" class="btn-secondary" id="btn-close-settings">Close</button>
+      </div>
+    </form>
+  </div>
+</div>
 
 <main>
   <div class="hero">

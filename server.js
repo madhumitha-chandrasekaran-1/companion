@@ -4,21 +4,24 @@ const crypto = require("crypto");
 const express = require("express");
 const Anthropic = require("@anthropic-ai/sdk");
 const store = require("./store");
+const keystore = require("./lib/keystore");
 const { fetchTriviaQuestion } = require("./lib/trivia");
 const { makeTavusFetch } = require("./lib/tavus-client");
 const { upgradePersonaCapabilities } = require("./lib/tavus-persona");
 const { TOOL_WEBHOOK_PATH, CONVERSATION_WEBHOOK_PATH, buildSystemPrompt } = require("./persona-config");
 
-const TAVUS_API_KEY = process.env.TAVUS_API_KEY;
-const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+// Tavus/Anthropic keys are no longer read from .env — they're entered once
+// through the app's own settings form and stored in data/keys.json (never
+// typed into a chat, never committed). One-time migration for anyone who
+// already had them in .env from before this existed:
+keystore.seedFromEnvIfEmpty();
+
 const PORT = process.env.PORT || 3000;
 const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || "").replace(/\/$/, "");
 const TOOL_WEBHOOK_SECRET = process.env.TAVUS_TOOL_WEBHOOK_SECRET || "";
 // re8e740a42 (Phoenix-1) was deprecated by Tavus; using a current Phoenix-3 stock replica.
 const DEFAULT_REPLICA_ID = "r9d30b0e55ac"; // "Luna"
 
-if (!TAVUS_API_KEY) console.warn("[warn] TAVUS_API_KEY is not set in .env");
-if (!ANTHROPIC_API_KEY) console.warn("[warn] ANTHROPIC_API_KEY is not set in .env");
 if (!PUBLIC_BASE_URL || PUBLIC_BASE_URL.includes("localhost")) {
   console.warn(
     "[warn] PUBLIC_BASE_URL is not set to a real public HTTPS URL — Tavus cannot reach " +
@@ -27,7 +30,20 @@ if (!PUBLIC_BASE_URL || PUBLIC_BASE_URL.includes("localhost")) {
   );
 }
 
-const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
+function getAnthropicClient() {
+  return new Anthropic({ apiKey: keystore.getAnthropicApiKey() });
+}
+
+// Blocks a route until both keys are set, returning a specific error shape
+// the frontend recognizes and shows as a "please enter your API keys" popup
+// rather than a generic failure.
+function requireKeys(req, res, next) {
+  const status = keystore.getStatus();
+  if (!status.hasTavusKey || !status.hasAnthropicKey) {
+    return res.status(400).json({ error: "Missing API keys", missingKeys: true, ...status });
+  }
+  next();
+}
 
 const app = express();
 // Capture the raw body alongside the parsed one — HMAC verification for the
@@ -38,7 +54,19 @@ app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf; } }));
 // leave the page stuck blank (looks like a bug, is actually just caching).
 app.use(express.static("public", { setHeaders: (res) => res.set("Cache-Control", "no-store") }));
 
-const tavusFetch = makeTavusFetch(TAVUS_API_KEY);
+const tavusFetch = makeTavusFetch(keystore.getTavusApiKey);
+
+// POST /api/keys { tavusApiKey, anthropicApiKey } — never echoes values back.
+app.post("/api/keys", (req, res) => {
+  const { tavusApiKey, anthropicApiKey } = req.body || {};
+  keystore.setKeys({ tavusApiKey, anthropicApiKey });
+  res.json(keystore.getStatus());
+});
+
+// GET /api/keys/status — booleans only, never the actual key values.
+app.get("/api/keys/status", (req, res) => {
+  res.json(keystore.getStatus());
+});
 
 function buildConversationalContext(companion) {
   if (!companion.summary && (!companion.facts || companion.facts.length === 0)) {
@@ -95,7 +123,7 @@ function extractTranscriptText(conversation) {
 }
 
 // POST /api/companion/create { name }
-app.post("/api/companion/create", async (req, res) => {
+app.post("/api/companion/create", requireKeys, async (req, res) => {
   try {
     const { name } = req.body;
     if (!name || typeof name !== "string" || !name.trim()) {
@@ -218,7 +246,7 @@ app.get("/api/companion", async (req, res) => {
 });
 
 // POST /api/call/start
-app.post("/api/call/start", async (req, res) => {
+app.post("/api/call/start", requireKeys, async (req, res) => {
   try {
     let companion = store.getCompanion();
     if (!companion) {
@@ -277,7 +305,7 @@ app.post("/api/call/start", async (req, res) => {
 });
 
 // POST /api/call/end { conversation_id }
-app.post("/api/call/end", async (req, res) => {
+app.post("/api/call/end", requireKeys, async (req, res) => {
   try {
     const { conversation_id: conversationId } = req.body;
     if (!conversationId) {
@@ -293,7 +321,7 @@ app.post("/api/call/end", async (req, res) => {
 });
 
 async function summarizeTranscript({ companionName, priorSummary, transcriptText }) {
-  const message = await anthropic.messages.create({
+  const message = await getAnthropicClient().messages.create({
     model: "claude-sonnet-4-6",
     max_tokens: 1024,
     system:

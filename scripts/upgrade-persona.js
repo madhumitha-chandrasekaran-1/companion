@@ -11,10 +11,12 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const store = require("../store");
+const keystore = require("../lib/keystore");
 const { makeTavusFetch } = require("../lib/tavus-client");
 const { upgradePersonaCapabilities } = require("../lib/tavus-persona");
 
-const TAVUS_API_KEY = process.env.TAVUS_API_KEY;
+keystore.seedFromEnvIfEmpty();
+
 const ENV_PATH = path.join(__dirname, "..", ".env");
 
 function ensureToolWebhookSecret() {
@@ -55,8 +57,13 @@ async function main() {
     );
   }
 
+  if (!keystore.getStatus().hasTavusKey) {
+    console.error("No Tavus API key set yet — open the app and enter it in Settings first.");
+    process.exit(1);
+  }
+
   const toolWebhookSecret = ensureToolWebhookSecret();
-  const tavusFetch = makeTavusFetch(TAVUS_API_KEY);
+  const tavusFetch = makeTavusFetch(keystore.getTavusApiKey);
 
   console.log(`Upgrading persona ${companion.personaId} (${companion.name})...`);
   await upgradePersonaCapabilities(tavusFetch, {

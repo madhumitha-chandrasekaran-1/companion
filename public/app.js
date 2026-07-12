@@ -54,9 +54,94 @@ async function api(path, options = {}) {
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error(body.error || `Request failed (${res.status})`);
+    const err = new Error(body.error || `Request failed (${res.status})`);
+    if (body.missingKeys) err.missingKeys = true;
+    throw err;
   }
   return body;
+}
+
+// ---------- Toast ----------
+
+let toastTimeout = null;
+
+function showToast(message) {
+  const toast = document.getElementById("toast");
+  toast.textContent = message;
+  toast.classList.add("show");
+  if (toastTimeout) clearTimeout(toastTimeout);
+  toastTimeout = setTimeout(() => toast.classList.remove("show"), 4000);
+}
+
+// ---------- Settings modal ----------
+
+const settingsBackdrop = document.getElementById("settings-backdrop");
+
+function setKeyStatusDot(el, hasKey) {
+  el.classList.toggle("ok", hasKey);
+}
+
+async function refreshKeyStatus() {
+  try {
+    const status = await api("/api/keys/status");
+    const anyMissing = !status.hasTavusKey || !status.hasAnthropicKey;
+    setKeyStatusDot(document.getElementById("key-status-dot"), !anyMissing);
+    setKeyStatusDot(document.getElementById("tavus-status-dot"), status.hasTavusKey);
+    setKeyStatusDot(document.getElementById("anthropic-status-dot"), status.hasAnthropicKey);
+    document.getElementById("tavus-status-text").textContent = status.hasTavusKey ? "Saved" : "Not set";
+    document.getElementById("anthropic-status-text").textContent = status.hasAnthropicKey ? "Saved" : "Not set";
+    return status;
+  } catch {
+    return { hasTavusKey: false, hasAnthropicKey: false };
+  }
+}
+
+function openSettings() {
+  document.getElementById("input-tavus-key").value = "";
+  document.getElementById("input-anthropic-key").value = "";
+  refreshKeyStatus();
+  settingsBackdrop.classList.remove("hidden");
+}
+
+function closeSettings() {
+  settingsBackdrop.classList.add("hidden");
+}
+
+document.getElementById("btn-open-settings").addEventListener("click", openSettings);
+document.getElementById("btn-close-settings").addEventListener("click", closeSettings);
+settingsBackdrop.addEventListener("click", (e) => {
+  if (e.target === settingsBackdrop) closeSettings();
+});
+
+document.getElementById("form-keys").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const tavusApiKey = document.getElementById("input-tavus-key").value.trim();
+  const anthropicApiKey = document.getElementById("input-anthropic-key").value.trim();
+  const btn = document.getElementById("btn-save-keys");
+
+  btn.disabled = true;
+  btn.textContent = "Saving…";
+
+  try {
+    await api("/api/keys", {
+      method: "POST",
+      body: JSON.stringify({ tavusApiKey, anthropicApiKey }),
+    });
+    document.getElementById("input-tavus-key").value = "";
+    document.getElementById("input-anthropic-key").value = "";
+    await refreshKeyStatus();
+    showToast("API keys saved.");
+  } catch (err) {
+    showToast(`Couldn't save keys: ${err.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Save";
+  }
+});
+
+function handleMissingKeys() {
+  showToast("Please enter your Tavus and Anthropic API key.");
+  openSettings();
 }
 
 function renderReady(companion) {
@@ -107,8 +192,12 @@ document.getElementById("form-setup").addEventListener("submit", async (e) => {
     });
     renderReady(companion);
   } catch (err) {
-    errorEl.textContent = err.message;
-    errorEl.classList.remove("hidden");
+    if (err.missingKeys) {
+      handleMissingKeys();
+    } else {
+      errorEl.textContent = err.message;
+      errorEl.classList.remove("hidden");
+    }
   } finally {
     btn.disabled = false;
     btn.textContent = "Create companion";
@@ -117,9 +206,15 @@ document.getElementById("form-setup").addEventListener("submit", async (e) => {
 
 btnCall.addEventListener("click", async () => {
   if (btnCall.disabled) return;
-  btnCall.disabled = true;
   document.getElementById("ready-error").classList.add("hidden");
 
+  const status = await refreshKeyStatus();
+  if (!status.hasTavusKey || !status.hasAnthropicKey) {
+    handleMissingKeys();
+    return;
+  }
+
+  btnCall.disabled = true;
   greetingLayer.classList.add("hidden");
   waitingText.textContent = readyHasTalkedBefore ? "Pulling up your memories…" : "Setting things up…";
   interludeLayer.classList.remove("hidden");
@@ -141,10 +236,14 @@ btnCall.addEventListener("click", async () => {
 
   if (apiError) {
     greetingLayer.classList.remove("hidden");
-    const errorEl = document.getElementById("ready-error");
-    errorEl.textContent = apiError.message;
-    errorEl.classList.remove("hidden");
     btnCall.disabled = false;
+    if (apiError.missingKeys) {
+      handleMissingKeys();
+    } else {
+      const errorEl = document.getElementById("ready-error");
+      errorEl.textContent = apiError.message;
+      errorEl.classList.remove("hidden");
+    }
     return;
   }
 
@@ -241,6 +340,8 @@ function runDevPreview() {
 
   return false;
 }
+
+refreshKeyStatus();
 
 if (!runDevPreview()) {
   loadInitialState().catch((err) => {
